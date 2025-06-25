@@ -25,7 +25,7 @@ uploaded_file = st.sidebar.file_uploader("Upload an Image", type=['jpg', 'png', 
 if uploaded_file:
     image = Image.open(uploaded_file)
     image = np.array(image)
-    st.image(image, caption="Original Image", use_container_width=True)
+    st.image(image, caption="Original Image")
 
     section = st.sidebar.radio("Choose Section", ["Basic Processing", "Color and Filtering", "Contours & Morphology", "Document Scanner"])
     final_output = None
