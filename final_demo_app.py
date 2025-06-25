@@ -27,7 +27,7 @@ if uploaded_file:
     image = np.array(image)
     st.image(image, caption="Original Image", use_column_width=True)
 
-    section = st.sidebar.radio("Choose Section", ["Basic Processing", "Color and Filtering", "Contours & Morphology"])
+    section = st.sidebar.radio("Choose Section", ["Basic Processing", "Color and Filtering", "Contours & Morphology", "Document Scanner"])
     final_output = None
 
     if section == "Basic Processing":
@@ -101,6 +101,7 @@ if uploaded_file:
         elif mode == "Edge Detection":
             edge_type = st.sidebar.selectbox("Edge Method", ["Sobel", "Laplacian", "Canny"])
             if edge_type == "Sobel":
+                ksize = st.sidebar.slider("Kernel Size", 1, 31, 3, step=2)
                 out = cv2.Sobel(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.CV_64F, 1, 0, ksize=ksize)
             elif edge_type == "Laplacian":
                 out = cv2.Laplacian(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.CV_64F)
@@ -145,6 +146,78 @@ if uploaded_file:
 
         final_output = out
         st.image([image, out], caption=["Original", f"{mode} Output"], width=300)
+
+    elif section == "Document Scanner":
+        st.subheader("Document Scanner")
+        
+        if st.button("Scan Document"):
+            h, w = image.shape[:2]
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            
+            # Try edge detection with lower thresholds
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edged = cv2.Canny(blurred, 30, 100)
+            
+            contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            
+            doc_contour = None
+            min_area = w * h * 0.1  # At least 10% of image
+            
+            for c in contours:
+                if cv2.contourArea(c) < min_area:
+                    continue
+                peri = cv2.arcLength(c, True)
+                for epsilon in [0.01, 0.02, 0.03, 0.05]:
+                    approx = cv2.approxPolyDP(c, epsilon * peri, True)
+                    if len(approx) == 4:
+                        doc_contour = approx
+                        break
+                if doc_contour is not None:
+                    break
+            
+            # Fallback: use entire image if no contour found
+            if doc_contour is None:
+                warped = image.copy()
+            else:
+                pts = doc_contour.reshape(4, 2).astype(np.float32)
+                rect = np.zeros((4, 2), dtype=np.float32)
+                
+                s = pts.sum(axis=1)
+                rect[0] = pts[np.argmin(s)]
+                rect[2] = pts[np.argmax(s)]
+                
+                diff = np.diff(pts, axis=1)
+                rect[1] = pts[np.argmin(diff)]
+                rect[3] = pts[np.argmax(diff)]
+                
+                (tl, tr, br, bl) = rect
+                widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+                widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+                maxWidth = max(int(widthA), int(widthB))
+                
+                heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+                heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+                maxHeight = max(int(heightA), int(heightB))
+                
+                dst = np.array([[0, 0], [maxWidth - 1, 0], [maxWidth - 1, maxHeight - 1], [0, maxHeight - 1]], dtype=np.float32)
+                
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+            
+            # Enhanced sharpening for receipts
+            warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+            
+            # Apply sharpening kernel
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpened = cv2.filter2D(warped_gray, -1, kernel)
+            
+            # Adaptive threshold for clean text
+            scanned = cv2.adaptiveThreshold(sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10)
+            scanned = cv2.cvtColor(scanned, cv2.COLOR_GRAY2BGR)
+            
+            final_output = scanned
+            st.image([image, scanned], caption=["Original", "Scanned Receipt"], width=300)
 
     if final_output is not None:
         st.subheader("Download Processed Image")
